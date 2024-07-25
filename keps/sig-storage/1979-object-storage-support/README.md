@@ -332,6 +332,10 @@ Here are the steps for creating a BucketAccess:
         |---------------------------------------|
     ```
 
+    TODO: Add clarity that users choose a single protocol that is supported by their application.
+    If the backend driver supports it, the BucketAccess will be granted. If not, COSI should return
+    an error stating which protocols are available for the BAC.
+
     The `credentialsSecretName` is the name of the secret that COSI will generate containing credentials to access the bucket. The same secret name has to be set in the podSpec as well as the projected secret volumes.
 
     In case of IAM style authentication, along with the `credentialsSecretName`, `serviceAccountName` field must also be specified. This will map the specified serviceaccount to the appropriate service account in the OSP.
@@ -470,34 +474,6 @@ Once a valid BucketAccess is available (`AccessGranted` is `True`), pods can use
       COSI_S3_REGION: us-west-1
     ```
 
-    ###### Multi-protocol example with keys
-
-    <!-- TODO: what if one protocol supports IAM-style but not the other?
-              do we need auth type individually per-protocol?
-              do we advertize KEY if any don't support IAM? -->
-    <!-- TODO: is IAM an object-storage-wide term, or is it S3-specific?
-              Can we agree on a generic terminology, like type=ServiceAccount? -->
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: <BucketAccess.spec.credentialsSecretName>
-      namespace: <BucketAccess.metadata.namespace>
-    data:
-      COSI_BUCKET_NAME: bc-$uuid
-      COSI_AUTHENTICATION_TYPE: KEY
-      COSI_PROTOCOLS: Azure,S3
-      COSI_AZURE_ENDPOINT: https://blob.mysite.com
-      COSI_AZURE_ACCESS_TOKEN: AZURETOKENEXAMPLE
-      COSI_AZURE_EXPIRY_TIMESTAMP: 2006-01-02T15:04:05Z07:00
-      COSI_S3_ENDPOINT: https://s3.mysite.com
-      COSI_S3_ACCESS_KEY_ID: AKIAIOSFODNN7EXAMPLE
-      COSI_S3_ACCESS_SECRET_KEY: wJalrXUtnFEMI/K...
-      COSI_S3_REGION: us-west-1
-    ```
-
-    In case IAM style authentication was specified, then workloadIdentityToken will be provided.
-
     ###### Single protocol example with IAM
     <!-- TODO: change this to be individual secret fields -->
     <!-- TODO: I need help with figuring out IAM.
@@ -525,24 +501,7 @@ Once a valid BucketAccess is available (`AccessGranted` is `True`), pods can use
         |-------------------------------------------------|
     ```
 
-    ###### Multi protocol example with IAM
-    <!-- TODO: maybe we can ignore workloadIdentityToken until we know if we need it or not? -->
-    ```yaml
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: <BucketAccess.spec.credentialsSecretName>
-      namespace: <BucketAccess.metadata.namespace>
-    data:
-      COSI_BUCKET_NAME: bc-$uuid
-      COSI_AUTHENTICATION_TYPE: IAM
-      COSI_PROTOCOLS: s3
-      COSI_S3_ENDPOINT: https://s3.amazonaws.com
-      COSI_S3_REGION: us-west-1
-      COSI_AZURE_EXPIRY_TIMESTAMP: 2006-01-02T15:04:05Z07:00
-    ```
 
-    Workloads are expected to read the definitions in this file to access a bucket. The `BucketInfo` API will not be a CRD in the cluster, however, it follows the same conventions as the rest of the COSI APIs. More details can be found [here](#bucketinfo)
 
 ### Sharing Buckets
 
@@ -965,6 +924,9 @@ This gRPC call creates a bucket in the OSP, and returns information about the ne
 
 The returned `bucketID` should be a unique identifier for the bucket in the OSP. This value could be the name of the bucket too. This value will be used by COSI to make all subsequent calls related to this bucket.
 
+TODO: note that the driver is expected to return the well-known gRPC return code `AlreadyExists`
+when the bucket already exists but is incompatible with the request.
+
 ```
     DriverCreateBucket
     |------------------------------------------|       |-----------------------------------------------|
@@ -1006,29 +968,54 @@ The returned `accountID` should be a unique identifier for the account in the OS
 
 This gRPC call deletes a bucket in the OSP.
 
+Initiated by sidecar to driver:
 ```
-    DriverDeleteBucket
-    |---------------------------------------------|       |-----------------------------------------------|
-    | grpc DriverDeleteBucketRequest{             | ===>  | DriverDeleteBucketResponse{}                  |
-    |     "bucketID": "br-$uuid"                  |       |-----------------------------------------------|
-    | }                                           |
-    |---------------------------------------------|
+grpc DriverDeleteBucketRequest{
+  bucketID: "br-$uuid"
+  parameters: {
+    "key": "value"
+  }
+}
 ```
+
+Driver response:
+```grpc
+DriverDeleteBucketResponse{} // empty with return code
+```
+
+// TODO: specify return codes for error/success situations here
 
 ##### DriverRevokeBucketAccess
 
+// TODO: do we need to specify this somewhere, or is it captured?
+
+BAC-A     BA
+params -> params
+
+BAC-A'
+params'
+
+del(BA) params (not params')
+
 This gRPC call revokes access granted to a particular account.
 
+Initiated by sidecar to driver:
+```grpc
+grpc DriverRevokeBucketAccessRequest{
+  bucketID: "br-$uuid"
+  accountID: "bar-$uuid"
+  parameters: { // should be from the params copied to BucketAccess
+    "key": "value"
+  }
+}
 ```
-    DriverDeleteBucket
-    |---------------------------------------------|       |-----------------------------------------------|
-    | grpc DriverRevokeBucketAccessRequest{       | ===>  | DriverRevokeBucketAccessResponse{}            |
-    |     "bucketID": "br-$uuid",                 |       |-----------------------------------------------|
-    |     "accountID": "bar-$uuid"                |
-    | }                                           |
-    |---------------------------------------------|
 
+Driver response:
+```grpc
+DriverRevokeBucketAccessResponse{} // empty with return code
 ```
+
+// TODO: specify return codes for error/success situations here
 
 ### Test Plan
 
