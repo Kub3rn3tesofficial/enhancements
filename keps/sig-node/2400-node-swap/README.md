@@ -44,6 +44,7 @@
     - [CRI Changes](#cri-changes)
     - [Swap Metrics](#swap-metrics)
     - [Add swap support to NFD](#add-swap-support-to-nfd)
+    - [Swap Aware Eviction Manager API](#swap-aware-eviction-manager-api)
   - [Test Plan](#test-plan)
       - [Prerequisite testing updates](#prerequisite-testing-updates)
       - [Unit tests](#unit-tests)
@@ -54,6 +55,7 @@
     - [Alpha2](#alpha2)
     - [Beta 1](#beta-1)
     - [Beta 2](#beta-2)
+    - [Beta 3](#beta-3)
     - [GA](#ga)
   - [Upgrade / Downgrade Strategy](#upgrade--downgrade-strategy)
   - [Version Skew Strategy](#version-skew-strategy)
@@ -235,6 +237,12 @@ This is the total amount of swap available for all the Burstable QoS pods; let's
 While progressing this feature to stable, we found a major gap in this feature. The eviction manager must protect the node from saturation of swap memory. If a node exhausts swap memory, this can take down the node. In some customer cases, OOMKiller could step in to save the node but this should not be the default option.
 
 Due to this, we want to enhance the eviction manager to be aware of swap. The eviction manager must step in when the node becoming unstable and start evicting pods that are swapping first.
+
+At a high level to do this, we will introduce a new eviction signal to track swap usage on the node. Users can toggle this usage based on their risk.
+When the swap is above this limit, then the node will evict pods in decreasing order of swap usage.
+
+When a node has Swap pressure, a node condition will be added on the node. 
+This allows for admins to at least see that there was swap pressure at one point.
 
 #### Best Practices
 
@@ -613,6 +621,7 @@ We summarize the implementation plan as following:
    the CRI on the amount of swap to allocate to each container. The container
    runtime will then write the swap settings to the container level cgroup.
 1. Add node stats to report swap usage.
+1. Enhance eviction manager to protect against swap memory running out.
 
 ### Enabling swap as an end user
 
@@ -777,6 +786,34 @@ k8s-dev-worker1
 k8s-dev-worker3
 ```
 
+#### Swap Aware Eviction Manager API
+
+We will introduce a new condition on the Node conditions that will notify admin of swap pressure.
+
+```golang
+type NodeConditionType string
+
+const ( ...
+	// NodeSwapPressure means the kubelet is under pressure due to insufficient swap memory.
+	NodeSwapPressure NodeConditionType = "SwapPressure"
+)
+```
+
+A condition goes with a taint so we will introduce a taint for swap also.
+
+```golang
+	// TaintNodeSwapPressure will be added when node has swap pressure
+	// and removed when node has enough swap.
+	TaintNodeSwapPressure = "node.kubernetes.io/swap-pressure"
+```
+
+The eviction manager will also have a new signal for swap.
+
+```golang
+	// SignalSwapMemoryAvailable is amount of swap available on the node
+	SignalSwapMemoryAvailable Signal = "swap.available"
+```
+
 ### Test Plan
 
 <!--
@@ -887,6 +924,10 @@ For beta 2:
 - Add Node-conformance tests for basic swap validation. To avoid disrupting node conformance lanes, only the
 cgroup knobs are validated to be defined as expected with no real memory stress or swap use.
 
+For beta 3:
+
+- We want e2e tests that can confirm that eviction will take in account swap usage
+
 For GA:
 
 - Add a lane dedicated for swap testing, including stress tests and other tests that might be disruptive and intensive.
@@ -954,10 +995,12 @@ Here are specific improvements to be made:
 - Add e2e test confirming that `NoSwap` will actually not swap
 - Add e2e test confirming that swap is used for `LimitedSwap`.
 - Document [best practices](#best-practices) for setting up Kubernetes with swap
-- Enhance beta docs to provide more information about swap.
-- Make the eviction manager swap aware.
 
-[via cgroups]: #restrict-swap-usage-at-the-cgroup-level
+#### Beta 3
+
+- Enhance website documentation
+  - Docs should be close to GA quality before promoting to GA.
+- Make eviction manager swap aware.
 
 #### GA
 
